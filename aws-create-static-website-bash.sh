@@ -73,6 +73,7 @@ fi
 projectname=cwebdevleon
 report() {
   echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >&2
+  echo "$*"
 }
 
 
@@ -101,42 +102,46 @@ cfbucketreadpolicy="$appname-cf-bucketread-policy-user"
 bucketname="$appname-bucket"
 bucketarn="arn:aws:s3:::$bucketname"
 
+if [ ! -d log ]; then
+  mkdir -p log;
+fi
+
 outputlog=log/$appname$(date +%Y-%m-%d.%H.%M.%S).log
 # rm $outputlog
 
 # report output to stdout and log
 report() {
-echo $*
-  echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >>$outputlog
+	echo $*
+	echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >>$outputlog
 }
 
 # runs command and reports output
 runcommand () { 
 
 	command=$1
-	report running $command
+	report "running $command"
 	output=$($command 2>&1)
-	report $output
+	report "$output"
 	}
 
 # report variables
-report app_id=$app_id
-report environment_name=$environment_name
-report language_id=$language_id
-report country_id=$country_id
-report instance_name=$instance_name
-report appname=$appname
-report cfblue=$cfblue
-report cfgreen=$cfgreen
-report cftest=$cftest
-report cfmodifypolicy=$cfmodifypolicy
-report bucketwritepolicy=$bucketwritepolicy
-report bucketreadpolicy=$bucketreadpolicy
-report cfmodifyuser=$cfmodifyuser
-report bucketreadoai=$bucketreadoai
-report jenkinsbucketwriteuser=$jenkinsbucketwriteuser
-report bucketname=$bucketname
-report initial_version=$initial_version
+report "app_id=$app_id"
+report "environment_name=$environment_name"
+report "language_id=$language_id"
+report "country_id=$country_id"
+report "instance_name=$instance_name"
+report "appname=$appname"
+report "cfblue=$cfblue"
+report "cfgreen=$cfgreen"
+report "cftest=$cftest"
+report "cfmodifypolicy=$cfmodifypolicy"
+report "bucketwritepolicy=$bucketwritepolicy"
+report "bucketreadpolicy=$bucketreadpolicy"
+report "cfmodifyuser=$cfmodifyuser"
+report "bucketreadoai=$bucketreadoai"
+report "jenkinsbucketwriteuser=$jenkinsbucketwriteuser"
+report "bucketname=$bucketname"
+report "initial_version=$initial_version
 
 # create S3 Bucket
 runcommand="aws s3api create-bucket --bucket $bucketname --region $aws_region --create-bucket-configuration LocationConstraint=$aws_region ----acl private"
@@ -170,7 +175,7 @@ read -r -d '' bucketwritepolicydoctemplate << EOM
 EOM
 #substitute mybucket for $bucketname
 bucketwritepolicydoc="${bucketwritepolicydoctemplate/mybucket/$bucketname}"
-report bucketwritepolicydoc=$bucketwritepolicydoc
+report "bucketwritepolicydoc=$bucketwritepolicydoc"
 
 # Create Origin Access ID for S3 bucket
 	# Create Origin

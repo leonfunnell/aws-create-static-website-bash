@@ -175,7 +175,7 @@ read -r -d '' bucketwritepolicydoctemplate << EOM
 EOM
 #substitute mybucket for $bucketname
 bucketwritepolicydoc="${bucketwritepolicydoctemplate/mybucket/$bucketname}"
-report "bucketwritepolicydoc=$bucketwritepolicydoc"
+report "bucketwritepolicydoc=$bucketwritepolicydoc" 
 
 # Create Origin Access ID for S3 bucket
 	# Create Origin

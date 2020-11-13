@@ -26,7 +26,7 @@ while [ "$1" != "" ]; do
             ;;
         -ak|--aws-access-key)
         aws_access_key=$VALUE
-		export AWS_ACCESS_KEY=$aws_access_key
+        export AWS_ACCESS_KEY=$aws_access_key
             ;;
         -as|--aws-secret)
         aws_secret=$VALUE
@@ -61,7 +61,7 @@ while [ "$1" != "" ]; do
         ;;
         -s|--silent)
         silent=true
-        ;;			
+        ;;          
         *)
             echo "ERROR: unknown parameter \"$PARAM\""
             usage
@@ -76,18 +76,18 @@ if [ ! $aws_region ]; then
      if [ ! "AWS_DEFAULT_REGION"]; then
           aws_region=$AWS_DEFAULT_REGION;
      else
-          aws-region="us-west-1";
+          aws_region="us-west-1";
      fi
 fi
 
 # function to output results to STDOUT and/or logfile
 report() {
-	if [ ! $logpath ]; then
-		echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >&2;
-	fi
-	if [ ! $silent ]; then
-		echo "$*";
-	fi
+    if [ ! $logpath ]; then
+        echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >&2;
+    fi
+    if [ ! $silent ]; then
+        echo "$*";
+    fi
 }
 
 appname="$app_id"
@@ -112,7 +112,7 @@ cfmodifypolicy="$appname-cloudfront-distribution-modify-policy"
 bucketwritepolicy="$appname-jenkins-bucketwrite-policy"
 bucketreadoai="$appname-cf-bucketread-access-identity.s3.amazonaws.com"
 cfmodifyuser="$appname-cloudfrontdistribution-modify-policy-user"
-jenkinsbucketwriteuser="$appname-jenkins-bucketwrite-policy-user"
+jenkinsbucketwriteuser="$appname-jenkins-bucketwrite-user"
 cfbucketreadpolicy="$appname-cf-bucketread-policy-user"
 bucketname="$appname-bucket"
 bucketarn="arn:aws:s3:::$bucketname"
@@ -163,29 +163,38 @@ report "jenkinsbucketwriteuser=$jenkinsbucketwriteuser"
 report "bucketname=$bucketname"
 report "initial_version=$initial_version"
 
+#get AWS Account ID for ARN construction
+awsaccountid=$(aws ec2 describe-security-groups --query 'SecurityGroups[0].OwnerId' --output text)
+
 # create S3 Bucket
-runcommand="aws s3api create-bucket --bucket $bucketname --region $aws_region --create-bucket-configuration LocationConstraint=$aws_region ----acl private"
+runcommand "aws s3api create-bucket --bucket $bucketname --region $aws_region --create-bucket-configuration LocationConstraint=$aws_region ----acl private"
 
 # create folder for initial_version
-runcommand="aws s3api put-object --bucket $bucketname --key $initial_version/"
+runcommand "aws s3api put-object --bucket $bucketname --key $initial_version/"
 
 # create jenkins user for s3 write
-runcommand="aws iam create-user --username $jenkinsbucketwriteuser"
-# get ARN of user for policy
-jenkinsbucketwriteuserarn=`aws iam get-user --user-name $jenkinsbucketwriteuser --output text --query '*.[Arn]'`
+runcommand "aws iam create-user --user-name $jenkinsbucketwriteuser"
+
+# create access-key for Jenkins
+runcommand "aws iam create-access-key --user-name $jenkinsbucketwriteuser"
+
+# generate ARN of user for policy
+jenkinsbucketwriteuserarn="arn:aws:iam::$awsaccountid:user/$jenkinsbucketwriteuser"
+#jenkinsbucketwriteuserarn=`aws iam get-user --user-name $jenkinsbucketwriteuser --output text --query '*.[Arn]'`
+report "jenkinsbucketwriteuserarn=$jenkinsbucketwriteuserarn"
 
 # create policy for jenkinsbucketwriteuser and attach to user
 # create bucket write policy
-read -r -d '' bucketwritepolicydoctemplate << EOM
+read -e -r -d '' bucketwritepolicydoctemplate << EOM
 {
     "Version": "2012-10-17",
-    "Statement": [
+        "Statement": [
         {
             "Effect": "Allow",
             "Action": [
                 "s3:DeleteObject**",
-                "s3:ListObject*"
-                    "s3:PutObject**"
+                "s3:ListBucket",
+                "s3:PutObject*"
             ],
             "Resource": [
                 "arn:aws:s3:::mybucket/*"
@@ -198,10 +207,30 @@ EOM
 #substitute mybucket for $bucketname
 bucketwritepolicydoc="${bucketwritepolicydoctemplate/mybucket/$bucketname}"
 report "bucketwritepolicydoc=$bucketwritepolicydoc"
+
 # create bucketwrite-policy
+runcommand "aws iam create-policy --policy-name $bucketwritepolicy --policy-document \"$bucketwritepolicydoc\""
+bucketwritepolicyarn="arn:aws:iam::$awsaccountid:policy/$bucketwritepolicy"
+report "bucketwritepolicyarn=$bucketwritepolicyarn"
+
 # attach bucketwrite-policy to jenkinsbucketwriteuser
+runcommand "aws iam attach-user-policy --user-name $jenkinsbucketwriteuser --policy-arn $bucketwritepolicyarn"
 
 # Create Origin Access ID for S3 bucket
+accessidentity="access-identity-$bucketname.s3.$aws_region.amazonaws.com"
+report "accessidentity=$accessidentity"
+read -e -r -d '' s3accessidconfigtemplate << EOM
+{
+    "CallerReference": "OAIComment",
+    "Comment": "OAIComment"
+}
+EOM
+#substitute OAIComment for $accessidentity
+s3accessid="${s3accessidconfigtemplate /OAIComment/$bucketname}"
+
+report "s3accessid=$s3accessid"
+runcommand "aws cloudfront create-cloud-front-origin-access-identity  --cloud-front-origin-access-identity-config $s3accessid"
+
 # Create Origin
 
 # Create Cloudfront Blue Distribution

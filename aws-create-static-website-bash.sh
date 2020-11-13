@@ -15,10 +15,7 @@
 # -l|--logpath <path for logfiles> (optional)
 
 
-
-
-
-
+# parse parameters
 while [ "$1" != "" ]; do
     PARAM=`echo $1 | awk -F= '{print $1}'`
     VALUE=`echo $1 | awk -F= '{print $2}'`
@@ -74,9 +71,7 @@ while [ "$1" != "" ]; do
     shift
 done
 
-
-
-# if no region was specified, take it from shell environment if exists, otherwise set to us-east-1 (AWS Default region)
+# if no AWS region was specified, take it from shell environment if exists, otherwise set to us-east-1 (AWS Default region)
 if [ ! $aws_region ]; then
      if [ ! "AWS_DEFAULT_REGION"]; then
           aws_region=$AWS_DEFAULT_REGION;
@@ -85,6 +80,7 @@ if [ ! $aws_region ]; then
      fi
 fi
 
+# function to output results to STDOUT and/or logfile
 report() {
 	if [ ! $logpath ]; then
 		echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >&2;
@@ -108,7 +104,7 @@ if ! [-z "$instance_name"]; then
      appname+="-$instance_name";
 fi
 
-
+#AWS resource parameters
 cfblue="$appname-cloudfront-blue"
 cfgreen="$appname-cloudfront-green"
 cftest="$appname-cloudfront-test"
@@ -175,6 +171,7 @@ runcommand="aws s3api put-object --bucket $bucketname --key $initial_version/"
 
 # create jenkins user for s3 write
 runcommand="aws iam create-user --username $jenkinsbucketwriteuser"
+# get ARN of user for policy
 jenkinsbucketwriteuserarn=`aws iam get-user --user-name $jenkinsbucketwriteuser --output text --query '*.[Arn]'`
 
 # create policy for jenkinsbucketwriteuser and attach to user
@@ -201,6 +198,8 @@ EOM
 #substitute mybucket for $bucketname
 bucketwritepolicydoc="${bucketwritepolicydoctemplate/mybucket/$bucketname}"
 report "bucketwritepolicydoc=$bucketwritepolicydoc"
+# create bucketwrite-policy
+# attach bucketwrite-policy to jenkinsbucketwriteuser
 
 # Create Origin Access ID for S3 bucket
 # Create Origin
@@ -210,3 +209,6 @@ report "bucketwritepolicydoc=$bucketwritepolicydoc"
 # OriginPath=
 # Create Cloudfront Green Distribution
 # Create Cloudfront Test Distribution
+
+#Create Lambda Function to update cloudfront distributions
+

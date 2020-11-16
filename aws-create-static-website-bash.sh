@@ -1,19 +1,47 @@
 #!/bin/bash
 
-# usage:
-# create_env arguments
-# -ak|--aws-access-key <AWS_ACCESS_KEY_ID> (optional - taken from environment unless specified)
-# -as|--aws-secret <AWS_SECRET_ACCESS_KEY> (optional - taken from environment unless specified)
-# -ar|--aws-region <AWS_DEFAULT_REGION> (optional - taken from environment unless specified)
-# -a|--application-name <application name> (mandatory)
-# -e|--environment-name <environment name> (mandatory)
-# -lang|--language-id <language two letter identifier> (optional)
-# -c|--country-id <country two letter identifier> (optional)
-# -i|--instance-name <unique instance name> (optional)
-# -v|--initial-version (optional)
-# -s|--silent (optional - prevent screen output)
-# -l|--logpath <path for logfiles> (optional)
 
+ usage(){
+ echo "
+Creates hosting environment for static website on AWS with Blue/Green/Test deploy stages
+Creates:
+- S3 Bucket
+- Blue, Green and Test CloudFront Distributions
+- IAM User and policy for updating S3 bucket from Jenkins or other CI tool
+- IAM User and policy for updating CF distributions
+- Route53 DNS with 50/50 round-robin between Blue and Green distributions
+
+Instructions for use:
+1. Specify application-name and environment-name as a minimum.  The bucket will be created with a folder called application-name/initial-version.  initial-version will default to 0.0.1 if unspecified
+2. All three CF distros will point to S3://bucketname/application-name/initial-version/
+3. Upload your website files to S3://bucketname/application-name/initial-version/ (e.g. S3://mybucket/cweb/0.0.1/ to make your website live.  Ensure you have an index.html or similar
+4. Your app will be available via both test-url and production-url
+
+To upgrade to a new release:
+1. Upload website to a new version folder (e.g. S3://mybucket/cweb/0.0.2/)
+2. Using application-name-cf-user, create a new origin in the Test CF distro pointing to the above folder
+3. Change behaviour of Test distro to the new behaviour
+4. Test your website on test-url
+5. Repeat the procedure above for the Blue distro
+6. 50% of new connectiontraffic will be directed to the new version.  
+7. If your users are happy, then repeat for the Green distro
+
+
+
+ -ak|--aws-access-key=<AWS_ACCESS_KEY_ID> (optional - taken from environment unless specified)
+ -as|--aws-secret=<AWS_SECRET_ACCESS_KEY> (optional - taken from environment unless specified)
+ -ar|--aws-region=<AWS_DEFAULT_REGION> (optional - taken from environment unless specified)
+ -a|--application-name=<application name> (mandatory)
+ -e|--environment-name=<environment name> (mandatory)
+ -tu|--test-url=<test url> (optional)
+ -pu|--production-url=<production url> (optional)
+ -lang|--language-i=<language two letter identifier> (optional)
+ -c|--country-id=<country two letter identifier> (optional)
+ -i|--instance-name=<unique instance name> (optional)
+ -v|--initial-version=<initial version number>(optional)
+ -s|--silent=true (optional - prevent screen output)
+ -l|--logpath=<path for logfiles> (optional)
+"
 
 # parse parameters
 while [ "$1" != "" ]; do
@@ -60,7 +88,7 @@ while [ "$1" != "" ]; do
         logpath=$VALUE
         ;;
         -s|--silent)
-        silent=true
+        silent=$VALUE
         ;;          
         *)
             echo "ERROR: unknown parameter \"$PARAM\""
@@ -70,6 +98,12 @@ while [ "$1" != "" ]; do
     esac
     shift
 done
+
+if [ $app_id ] || [ $environment_name ]; then
+	 echo "ERROR: missing parameters!";
+	 usage;
+	 exit 1;
+fi
 
 # if no AWS region was specified, take it from shell environment if exists, otherwise set to us-east-1 (AWS Default region)
 if [ ! $aws_region ]; then
@@ -235,7 +269,7 @@ runcommand "aws cloudfront create-cloud-front-origin-access-identity  --cloud-fr
 
 # Create Cloudfront Blue Distribution
 # Origin=$bucketname.s3.amazonaws.com
-# OriginPath=
+# OriginPath=/$appname/$initial_version
 # Create Cloudfront Green Distribution
 # Create Cloudfront Test Distribution
 

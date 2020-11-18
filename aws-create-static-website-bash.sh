@@ -46,7 +46,7 @@ To upgrade to a new release:
  -v|--initial-version=<initial version number>(optional)
  -s|--silent (optional - prevent screen output)
  -l|--log-directory=<directory for logfiles> (optional)
- -c|--clean-up (optional) - remove all previously deployed assets <NOT CURRENTLY IMPLEMENTED>"
+ -c|--clean-up (optional) - remove all previously deployed assets"
 }
 
 # check dependencies
@@ -122,6 +122,9 @@ while [ "$1" != "" ]; do
         -s|--silent)
         silent="true"
         ;;          
+		-c|--clean-up)
+		cleanup="true"
+		;;
         *)
             echo "ERROR: unknown parameter \"$PARAM\""
             usage
@@ -160,6 +163,7 @@ report() {
     fi
 }
 
+cfdistronames="blue,green,test"
 appname="$app_id"
 appname+="-$environment_name"
 # add optional parameters to appname if they exist
@@ -196,6 +200,7 @@ if [ $logpath ]; then
 fi
 
 
+
 # function to report output to stdout and log
 report() {
      # echo output to stdout if silent flag not set
@@ -216,7 +221,7 @@ runcommand () {
     else
         rc=$?;
         report "ERROR #$rc, $output";
-        exit 1;
+        #exit 1;
     fi
      }
      
@@ -229,7 +234,7 @@ runcommandescaped ()
     else
         rc=$?;
         report "ERROR #$rc, $output";
-        exit 1;
+       # exit 1;
     fi
 }
 
@@ -252,13 +257,8 @@ report "jenkinsbucketwriteuser=$jenkinsbucketwriteuser"
 report "bucketname=$bucketname"
 report "initial_version=$initial_version"
 
-#get AWS Account ID for ARN construction
-awsaccountid=$(aws ec2 describe-security-groups --query 'SecurityGroups[0].OwnerId' --output text)
-
-# create S3 Bucket
-runcommand "aws s3api create-bucket --bucket $bucketname --region $aws_region --create-bucket-configuration LocationConstraint=$aws_region --acl private"
-
-# block public access for S3 bucket
+# JSON Templates
+# Template to block public access for S3 bucket
 read -e -r -d '' bucketblockpublictemplate << EOM
 {
     "BlockPublicAcls":true,
@@ -268,29 +268,7 @@ read -e -r -d '' bucketblockpublictemplate << EOM
 }
 EOM
 
-runcommandescaped "`aws s3api put-public-access-block --bucket $bucketname --public-access-block-configuration "$bucketblockpublictemplate"`"
-
-# create folder for initial_version
-runcommand "aws s3api put-object --bucket $bucketname --key $initial_version/"
-# create folder structure for website logs
-runcommand "aws s3api put-object --bucket $bucketname --key website-logs/test/"
-runcommand "aws s3api put-object --bucket $bucketname --key website-logs/blue/"
-runcommand "aws s3api put-object --bucket $bucketname --key website-logs/green/"
-
-
-# create jenkins user for s3 write
-runcommand "aws iam create-user --user-name $jenkinsbucketwriteuser"
-
-# create access-key for Jenkins
-runcommand "aws iam create-access-key --user-name $jenkinsbucketwriteuser"
-
-# generate ARN of user for policy
-jenkinsbucketwriteuserarn="arn:aws:iam::$awsaccountid:user/$jenkinsbucketwriteuser"
-#jenkinsbucketwriteuserarn=`aws iam get-user --user-name $jenkinsbucketwriteuser --output text --query '*.[Arn]'`
-report "jenkinsbucketwriteuserarn=$jenkinsbucketwriteuserarn"
-
-# create policy for jenkinsbucketwriteuser and attach to user
-# create bucket write policy
+# Template for bucket write policy
 read -e -r -d '' bucketwritepolicydoctemplate << EOM
 {
     "Version": "2012-10-17",
@@ -310,21 +288,7 @@ read -e -r -d '' bucketwritepolicydoctemplate << EOM
 }
 EOM
 
-#substitute mybucket for $bucketname
-bucketwritepolicydoc="${bucketwritepolicydoctemplate/mybucket/$bucketname}"
-report "bucketwritepolicydoc=$bucketwritepolicydoc"
-
-# create bucketwrite-policy
-runcommandescaped "`aws iam create-policy --policy-name $bucketwritepolicy --policy-document "$bucketwritepolicydoc"`"
-bucketwritepolicyarn="arn:aws:iam::$awsaccountid:policy/$bucketwritepolicy"
-report "bucketwritepolicyarn=$bucketwritepolicyarn"
-
-# attach bucketwrite-policy to jenkinsbucketwriteuser
-report '"aws iam attach-user-policy --user-name $jenkinsbucketwriteuser --policy-arn "$bucketwritepolicyarn"' 
-
-# Create Origin Access ID for S3 bucket
-accessidentity="access-identity-$bucketname.s3.$aws_region.amazonaws.com"
-report "accessidentity=$accessidentity"
+# Template to create Origin Access ID for S3 bucket
 read -e -r -d '' s3accessidconfigtemplate << EOM
 {
     "CallerReference": "OAIComment",
@@ -332,18 +296,7 @@ read -e -r -d '' s3accessidconfigtemplate << EOM
 }
 EOM
 
-
-#substitute OAIComment for $accessidentity
-s3accessid=`echo "$s3accessidconfigtemplate" | sed "s/OAIComment/$bucketname/"`
-#s3accessid="${s3accessidconfigtemplate/OAIComment/$bucketname}"
-
-report "s3accessid=$s3accessid"
-runcommandescaped "`aws cloudfront create-cloud-front-origin-access-identity  --cloud-front-origin-access-identity-config "$s3accessid"`"
-# Get ID of Origin Access Identity
-OAI=$(aws cloudfront list-cloud-front-origin-access-identities | jq --arg bucketname "$bucketname" '.CloudFrontOriginAccessIdentityList.Items | .[]| select(.Comment==$bucketname).Id'|sed 's/"//g')
-
-
-# CloudFront Config JSON Template
+# Template for CloudFront Config
 read -e -r -d '' cfdistroconfigtemplate << EOM
 {
   "CallerReference": "MyCallerReference",
@@ -446,80 +399,148 @@ read -e -r -d '' cfdistroconfigtemplate << EOM
 EOM
 
 
-# Create Cloudfront Test Distribution Parameters
-testdistroparams=$(echo "$cfdistroconfigtemplate" | jq \
---arg callerreference "test-$bucketname-distro"
---arg originid "$bucketname-${initial_version//./-}" \
---arg bucketaddress "$bucketaddress" \
---arg comment "$cftest" \
---arg OAI "origin-access-identity/cloudfront/$OAI" \
---arg realeasefolder "/$initial_version" \
---arg loggingfolder "/website-logs/test" \
-'.CallerReference = $callerreference |
-.Origins.Items[].Id = $originid | 
-.Origins.Items[].DomainName = $bucketaddress | 
-.Origins.Items[].OriginPath = $realeasefolder | 
-.Origins.Items[].S3OriginConfig.OriginAccessIdentity = $OAI | 
-.DefaultCacheBehavior.TargetOriginId =$originid |
-.Comment = $comment |
-.Logging.Bucket = $bucketaddress | 
-.Logging.Prefix = $loggingfolder')
-report "testdistroparams=$testdistroparams"
+#get AWS Account ID for ARN construction
+awsaccountid=$(aws ec2 describe-security-groups --query 'SecurityGroups[0].OwnerId' --output text)
+report "awsaccountid=$awsaccountid"
 
-# Create Test CloudFront Distribution
-runcommandescaped "`aws cloudfront create-distribution --distribution-config "$testdistroparams"`"
+if [ ! $cleanup ]; then
+    # create S3 Bucket
+    runcommand "aws s3api create-bucket --bucket $bucketname --region $aws_region --create-bucket-configuration LocationConstraint=$aws_region --acl private";
+    # block public access for S3 bucket
+    runcommandescaped "`aws s3api put-public-access-block --bucket $bucketname --public-access-block-configuration "$bucketblockpublictemplate"`";
+    # create folder for initial_version of website
+    runcommand "aws s3api put-object --bucket $bucketname --key $initial_version/";
+    # create folder structure for website logs
+    runcommand "aws s3api put-object --bucket $bucketname --key website-logs/test/";
+    runcommand "aws s3api put-object --bucket $bucketname --key website-logs/blue/";
+    runcommand "aws s3api put-object --bucket $bucketname --key website-logs/green/";
+else
+    # remove bucket and contents
+    report "Removing Bucket $bucketname";
+    runcommand "aws s3 rm s3://$bucketname --recursive";
+    runcommand "aws s3 rb s3://$bucketname --force";
+fi
 
-# Create Cloudfront Blue Distribution Parameters
-bluedistroparams=$(echo "$cfdistroconfigtemplate" | jq \
---arg callerreference "blue-$bucketname-distro" \
---arg originid "$bucketname-${initial_version//./-}" \
---arg bucketaddress "$bucketaddress" \
---arg comment "$cfblue" \
---arg OAI "origin-access-identity/cloudfront/$OAI" \
---arg realeasefolder "/$initial_version" \
---arg loggingfolder "/website-logs/blue" \
-'.CallerReference = $callerreference |
-.Origins.Items[].Id = $originid |
-.Origins.Items[].DomainName = $bucketaddress | 
-.Origins.Items[].OriginPath = $realeasefolder | 
-.Origins.Items[].S3OriginConfig.OriginAccessIdentity = $OAI | 
-.DefaultCacheBehavior.TargetOriginId =$originid |
-.Comment = $comment |
-.Logging.Bucket = $bucketaddress | 
-.Logging.Prefix = $loggingfolder')
-report "bluedistroparams=$bluedistroparams"
+if [ ! $cleanup ]; then
+    # create jenkins user for s3 write
+    runcommand "aws iam create-user --user-name $jenkinsbucketwriteuser";
 
-# Create Blue CloudFront Distribution
-runcommandescaped "`aws cloudfront create-distribution --distribution-config "$bluedistroparams"`"
+    # create access-key for Jenkins
+    runcommand "aws iam create-access-key --user-name $jenkinsbucketwriteuser";
 
+    # generate ARN of user for policy
+    jenkinsbucketwriteuserarn="arn:aws:iam::$awsaccountid:user/$jenkinsbucketwriteuser";
+    report "jenkinsbucketwriteuserarn=$jenkinsbucketwriteuserarn";
 
-# Create Cloudfront Green Distribution Parameters
-greendistroparams=$(echo "$cfdistroconfigtemplate" | jq \
---arg callerreference "green-$bucketname-distro" \
---arg originid "$bucketname-${initial_version//./-}" \
---arg bucketaddress "$bucketaddress" \
---arg comment "$cfgreen" \
---arg OAI "origin-access-identity/cloudfront/$OAI" \
---arg realeasefolder "/$initial_version" \
---arg loggingfolder "/website-logs/green" \
-'.CallerReference = $callerreference |
-.Origins.Items[].Id = $originid |
-.Origins.Items[].DomainName = $bucketaddress | 
-.Origins.Items[].OriginPath = $realeasefolder | 
-.Origins.Items[].S3OriginConfig.OriginAccessIdentity = $OAI | 
-.DefaultCacheBehavior.TargetOriginId =$originid |
-.Comment = $comment |
-.Logging.Bucket = $bucketaddress | 
-.Logging.Prefix = $loggingfolder')
-report "greendistroparams=$bluedistroparams"
+    # create policy for jenkinsbucketwriteuser and attach to user
 
-# Create Green CloudFront Distribution
-runcommandescaped "`aws cloudfront create-distribution --distribution-config "$greendistroparams"`"
+    # create bucket write policy
+    #substitute mybucket for $bucketname
+    bucketwritepolicydoc="${bucketwritepolicydoctemplate/mybucket/$bucketname}";
+    report "bucketwritepolicydoc=$bucketwritepolicydoc";
 
+    # create bucketwrite-policy
+    runcommandescaped "`aws iam create-policy --policy-name $bucketwritepolicy --policy-document "$bucketwritepolicydoc"`";
+    bucketwritepolicyarn="arn:aws:iam::$awsaccountid:policy/$bucketwritepolicy";
+    report "bucketwritepolicyarn=$bucketwritepolicyarn";
 
+    # attach bucketwrite-policy to jenkinsbucketwriteuser
+    report '"aws iam attach-user-policy --user-name $jenkinsbucketwriteuser --policy-arn "$bucketwritepolicyarn"';
+else
+    # delete access keys for jenkins user
+    report "removing access keys for Jenkins Bucket Write User account $jenkinsbucketwriteuser";
+    accesskeyids=$(aws iam list-access-keys --user-name $jenkinsbucketwriteuser | jq '.AccessKeyMetadata |.[] | .AccessKeyId' | sed 's/"//g');
+    report "found access key IDs $accesskeyids"
+    for keyid in $accesskeyids; do
+        report "deleting access key ID $keyid"
+        runcommand "aws iam delete-access-key --access-key-id $keyid --user-name $jenkinsbucketwriteuser";
+    done;
+    # delete jenkins user for s3 write
+    report "removing Jenkins Bucket Write User account $jenkinsbucketwriteuser";
+    runcommand "aws iam delete-user --user-name $jenkinsbucketwriteuser";
+    # delete bucketwrite-policy
+    bucketwritepolicyarn="arn:aws:iam::$awsaccountid:policy/$bucketwritepolicy";
+    report "removing bucket policy at ARN $bucketwritepolicyarn"
+    runcommand "aws iam delete-policy --policy-arn $bucketwritepolicyarn";
+fi
 
-runcommand="aws cloudfront create-distribution --origin-domain-name $origin"
+# Define Origin Access ID for S3 bucket
+accessidentity="access-identity-$bucketname.s3.$aws_region.amazonaws.com"
+report "accessidentity=$accessidentity"
+# create access ID config from template by substituting OAIComment for $accessidentity
+s3accessid=`echo "$s3accessidconfigtemplate" | sed "s/OAIComment/$bucketname/"`
+report "s3accessid=$s3accessid"
 
+if [ ! $cleanup ]; then
+    # Create Origin Access ID for S3 bucket
+    report "creating CloudFront Origin Access Identity for S3 bucket $bucketname";
+    runcommandescaped "`aws cloudfront create-cloud-front-origin-access-identity  --cloud-front-origin-access-identity-config "$s3accessid"`";
+    # Get ID of Origin Access Identity
+else
+
+    OAI=$(aws cloudfront list-cloud-front-origin-access-identities | jq --arg bucketname "$bucketname" '.CloudFrontOriginAccessIdentityList.Items | .[]| select(.Comment==$bucketname).Id'|sed 's/"//g');
+    ETAG=$(aws cloudfront get-cloud-front-origin-access-identity --id $OAI | jq '.ETag'|sed 's/"//g');
+    # delete cloudfront origin access identity
+    report "deleting CloudFront Origin Access Identity for S3 bucket $bucketname"
+    runcommand "aws cloudfront delete-cloud-front-origin-access-identity --id $OAI --if-match $ETAG"
+fi
+
+if [ ! $cleanup ]; then
+        for distro in ${cfdistronames//,/ }; do
+            # find IDs of existing cloudfront distros for shutdown and deletion
+            distroname=$appname-cloudfront-$distro;
+            # Create Cloudfront Distributions
+            # Create Cloudfront Test Distribution Parameters
+            OAI=$(aws cloudfront list-cloud-front-origin-access-identities | jq --arg bucketname "$bucketname" '.CloudFrontOriginAccessIdentityList.Items | .[]| select(.Comment==$bucketname).Id'|sed 's/"//g');
+            distroparams=$(echo "$cfdistroconfigtemplate" | jq \
+            --arg callerreference "$distroname"
+            --arg originid "$bucketname-${initial_version//./-}" \
+            --arg bucketaddress "$bucketaddress" \
+            --arg comment "$distroname" \
+            --arg OAI "origin-access-identity/cloudfront/$OAI" \
+            --arg realeasefolder "/$initial_version" \
+            --arg loggingfolder "/website-logs/$distro" \
+            '.CallerReference = $callerreference |
+            .Origins.Items[].Id = $originid | 
+            .Origins.Items[].DomainName = $bucketaddress | 
+            .Origins.Items[].OriginPath = $realeasefolder | 
+            .Origins.Items[].S3OriginConfig.OriginAccessIdentity = $OAI | 
+            .DefaultCacheBehavior.TargetOriginId =$originid |
+            .Comment = $comment |
+            .Logging.Bucket = $bucketaddress | 
+            .Logging.Prefix = $loggingfolder');
+            report "For $distroname, distroparams=$distroparams";
+
+            # Create Test CloudFront Distribution
+            runcommandescaped "`aws cloudfront create-distribution --distribution-config "$distroparams"`";
+        done;
+else
+    for distro in ${cfdistronames//,/ }; do
+        # find IDs of existing cloudfront distros for shutdown and deletion
+        distroname=$appname-cloudfront-$distro;
+        cfid=$(aws cloudfront list-distributions | jq --arg distroname $distroname '.DistributionList.Items | .[] | select(.Comment==$distroname).Id' | sed 's/"//g');
+        report "cloudfront ID $cfid";
+        ETAG=$(aws cloudfront get-distribution-config --id $cfid | jq '. | .ETag' | sed 's/"//g');
+        cfcurrentconfig=$(aws cloudfront get-distribution-config --id $cfid | jq '. | .DistributionConfig');
+        disableconfig=$(echo $cfcurrentconfig | jq '.Enabled = false');
+        report "disabling cloudfront distribution $distroname with ID $cfid and ETag $ETAG";
+        runcommandescaped "`aws cloudfront update-distribution --id $cfid --distribution-config "$disableconfig" --if-match $ETAG`";
+        while true; do
+            cfstatus=$(aws cloudfront list-distributions | jq --arg distroname $distroname '.DistributionList.Items | .[] | select(.Comment==$distroname).Status' | sed 's/"//g');
+            if [ $cfstatus == "InProgress" ]; then
+                report "status $cfstatus, waiting for completion, retry in 5 seconds...";
+            else 
+                report "status $cfstatus";
+                break;
+            fi;
+            sleep 5;
+        done
+        # delete disabled distribution
+        ETAG=$(aws cloudfront get-distribution-config --id $cfid | jq '. | .ETag' | sed 's/"//g');
+        report "deleteing cloudfront distribution $distroname with ID $cfid and ETag $ETAG";
+        runcommand "aws cloudfront delete-distribution --id $cfid --if-match $ETAG";
+    done;
+fi
 # OriginPath=/$appname/$initial_version
 # Create Cloudfront Green Distribution
 

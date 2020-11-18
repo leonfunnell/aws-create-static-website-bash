@@ -476,13 +476,6 @@ if [ ! $cleanup ]; then
     report "creating CloudFront Origin Access Identity for S3 bucket $bucketname";
     runcommandescaped "`aws cloudfront create-cloud-front-origin-access-identity  --cloud-front-origin-access-identity-config "$s3accessid"`";
     # Get ID of Origin Access Identity
-else
-
-    OAI=$(aws cloudfront list-cloud-front-origin-access-identities | jq --arg bucketname "$bucketname" '.CloudFrontOriginAccessIdentityList.Items | .[]| select(.Comment==$bucketname).Id'|sed 's/"//g');
-    ETAG=$(aws cloudfront get-cloud-front-origin-access-identity --id $OAI | jq '.ETag'|sed 's/"//g');
-    # delete cloudfront origin access identity
-    report "deleting CloudFront Origin Access Identity for S3 bucket $bucketname"
-    runcommand "aws cloudfront delete-cloud-front-origin-access-identity --id $OAI --if-match $ETAG"
 fi
 
 if [ ! $cleanup ]; then
@@ -540,9 +533,14 @@ else
         report "deleteing cloudfront distribution $distroname with ID $cfid and ETag $ETAG";
         runcommand "aws cloudfront delete-distribution --id $cfid --if-match $ETAG";
     done;
+    
+    # cleanup origin-access-identity
+    OAI=$(aws cloudfront list-cloud-front-origin-access-identities | jq --arg bucketname "$bucketname" '.CloudFrontOriginAccessIdentityList.Items | .[]| select(.Comment==$bucketname).Id'|sed 's/"//g');
+    ETAG=$(aws cloudfront get-cloud-front-origin-access-identity --id $OAI | jq '.ETag'|sed 's/"//g');
+    # delete cloudfront origin access identity
+    report "deleting CloudFront Origin Access Identity for S3 bucket $bucketname"
+    runcommand "aws cloudfront delete-cloud-front-origin-access-identity --id $OAI --if-match $ETAG"
 fi
-# OriginPath=/$appname/$initial_version
-# Create Cloudfront Green Distribution
 
 
 #Create Lambda Function to update cloudfront distributions

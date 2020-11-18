@@ -44,8 +44,9 @@ To upgrade to a new release:
  -c|--country-id=<country two letter identifier> (optional)
  -i|--instance-name=<unique instance name> (optional)
  -v|--initial-version=<initial version number>(optional)
- -s|--silent=true (optional - prevent screen output)
- -l|--log-directory=<directory for logfiles> (optional)"
+ -s|--silent (optional - prevent screen output)
+ -l|--log-directory=<directory for logfiles> (optional)
+ -c|--clean-up (optional) - remove all previously deployed assets <NOT CURRENTLY IMPLEMENTED>"
 }
 
 # check dependencies
@@ -56,16 +57,16 @@ fi
 
 if ! [ -x "$(command -v aws)" ]; then 
   echo "ERROR: AWS CLI is not installed!  Please install AWS CLI!";
-	dependencyfail=true;
+    dependencyfail=true;
 fi
 
 if ! [ -x "$(command -v sed)" ]; then 
   echo "ERROR: sed is not installed!  Please install sed!";
-  	dependencyfail=true;
+    dependencyfail=true;
 fi
 if [ $dependencyfail ]; then
-	usage
-	exit 1
+    usage
+    exit 1
 fi
 
 # parse parameters
@@ -183,6 +184,7 @@ cfmodifyuser="$appname-cloudfrontdistribution-modify-policy-user"
 jenkinsbucketwriteuser="$appname-jenkins-bucketwrite-user"
 cfbucketreadpolicy="$appname-cf-bucketread-policy-user"
 bucketname="$appname-bucket"
+bucketaddress="$bucketname.s3.amazonaws.com"
 bucketarn="arn:aws:s3:::$bucketname"
 
 #initialise logpath if specified
@@ -338,125 +340,188 @@ s3accessid=`echo "$s3accessidconfigtemplate" | sed "s/OAIComment/$bucketname/"`
 report "s3accessid=$s3accessid"
 runcommandescaped "`aws cloudfront create-cloud-front-origin-access-identity  --cloud-front-origin-access-identity-config "$s3accessid"`"
 # Get ID of Origin Access Identity
-OAI=$(aws cloudfront list-cloud-front-origin-access-identities | jq '.CloudFrontOriginAccessIdentityList.Items | .[]| select(.Comment=="$bucketname").Id')
+OAI=$(aws cloudfront list-cloud-front-origin-access-identities | jq --arg bucketname "$bucketname" '.CloudFrontOriginAccessIdentityList.Items | .[]| select(.Comment==$bucketname).Id'|sed 's/"//g')
 
 
-# Create Origin
+# CloudFront Config JSON Template
 read -e -r -d '' cfdistroconfigtemplate << EOM
 {
-    "ETag": "E21B74DNW5JBWL",
-    "DistributionConfig": {
-        "CallerReference": "cli-1605554712-103500",
-        "Aliases": {
-            "Quantity": 0
-        },
-        "DefaultRootObject": "",
-        "Origins": {
-            "Quantity": 1,
-            "Items": [
-                {
-                    "Id": "ifggzzzhg-jassfe-bucket.s3.amazonaws.com-1605554712-125426",
-                    "DomainName": "ifggzzzhg-jassfe-bucket.s3.amazonaws.com",
-                    "OriginPath": "/0.0.1",
-                    "CustomHeaders": {
-                        "Quantity": 0
-                    },
-                    "S3OriginConfig": {
-                        "OriginAccessIdentity": "origin-access-identity/cloudfront/E1S112VUAMJTF5"
-                    }
-                }
-            ]
-        },
-        "OriginGroups": {
-            "Quantity": 0
-        },
-        "DefaultCacheBehavior": {
-            "TargetOriginId": "ifggzzzhg-jassfe-bucket.s3.amazonaws.com-1605554712-125426",
-            "ForwardedValues": {
-                "QueryString": false,
-                "Cookies": {
-                    "Forward": "none"
-                },
-                "Headers": {
-                    "Quantity": 0
-                },
-                "QueryStringCacheKeys": {
-                    "Quantity": 0
-                }
-            },
-            "TrustedSigners": {
-                "Enabled": false,
-                "Quantity": 0
-            },
-            "ViewerProtocolPolicy": "allow-all",
-            "MinTTL": 0,
-            "AllowedMethods": {
-                "Quantity": 2,
-                "Items": [
-                    "HEAD",
-                    "GET"
-                ],
-                "CachedMethods": {
-                    "Quantity": 2,
-                    "Items": [
-                        "HEAD",
-                        "GET"
-                    ]
-                }
-            },
-            "SmoothStreaming": false,
-            "DefaultTTL": 86400,
-            "MaxTTL": 31536000,
-            "Compress": false,
-            "LambdaFunctionAssociations": {
-                "Quantity": 0
-            },
-            "FieldLevelEncryptionId": ""
-        },
-        "CacheBehaviors": {
-            "Quantity": 0
-        },
-        "CustomErrorResponses": {
-            "Quantity": 0
-        },
-        "Comment": "MyComment",
-        "Logging": {
-            "Enabled": false,
-            "IncludeCookies": false,
-            "Bucket": "",
-            "Prefix": ""
-        },
-        "PriceClass": "PriceClass_All",
-        "Enabled": true,
-        "ViewerCertificate": {
-            "CloudFrontDefaultCertificate": true,
-            "MinimumProtocolVersion": "TLSv1",
-            "CertificateSource": "cloudfront"
-        },
-        "Restrictions": {
-            "GeoRestriction": {
-                "RestrictionType": "none",
-                "Quantity": 0
-            }
-        },
-        "WebACLId": "",
-        "HttpVersion": "http2",
-        "IsIPV6Enabled": true
-    }
+  "CallerReference": "MyCallerReference",
+  "Aliases": {
+      "Quantity": 0
+  },
+  "DefaultRootObject": "index.html",
+  "Origins": {
+      "Quantity": 1,
+      "Items": [
+          {
+              "Id": "MyBucketURL",
+              "DomainName": "MyBucketURL",
+              "OriginPath": "/MyPath",
+              "CustomHeaders": {
+                  "Quantity": 0
+              },
+              "S3OriginConfig": {
+                  "OriginAccessIdentity": "origin-access-identity/cloudfront/MyOAI"
+              }
+          }
+      ]
+  },
+  "OriginGroups": {
+      "Quantity": 0
+  },
+  "DefaultCacheBehavior": {
+      "TargetOriginId": "MyBucketURL",
+      "ForwardedValues": {
+          "QueryString": false,
+          "Cookies": {
+              "Forward": "none"
+          },
+          "Headers": {
+              "Quantity": 0
+          },
+          "QueryStringCacheKeys": {
+              "Quantity": 0
+          }
+      },
+      "TrustedSigners": {
+          "Enabled": false,
+          "Quantity": 0
+      },
+      "ViewerProtocolPolicy": "allow-all",
+      "MinTTL": 0,
+      "AllowedMethods": {
+          "Quantity": 2,
+          "Items": [
+              "HEAD",
+              "GET"
+          ],
+          "CachedMethods": {
+              "Quantity": 2,
+              "Items": [
+                  "HEAD",
+                  "GET"
+              ]
+          }
+      },
+      "SmoothStreaming": false,
+      "DefaultTTL": 86400,
+      "MaxTTL": 31536000,
+      "Compress": false,
+      "LambdaFunctionAssociations": {
+          "Quantity": 0
+      },
+      "FieldLevelEncryptionId": ""
+  },
+  "CacheBehaviors": {
+      "Quantity": 0
+  },
+  "CustomErrorResponses": {
+      "Quantity": 0
+  },
+  "Comment": "",
+  "Logging": {
+      "Enabled": false,
+      "IncludeCookies": false,
+      "Bucket": "",
+      "Prefix": ""
+  },
+  "PriceClass": "PriceClass_All",
+  "Enabled": true,
+  "ViewerCertificate": {
+      "CloudFrontDefaultCertificate": true,
+      "MinimumProtocolVersion": "TLSv1",
+      "CertificateSource": "cloudfront"
+  },
+  "Restrictions": {
+      "GeoRestriction": {
+          "RestrictionType": "none",
+          "Quantity": 0
+      }
+  },
+  "WebACLId": "",
+  "HttpVersion": "http2",
+  "IsIPV6Enabled": true
 }
 EOM
 
 
+# Create Cloudfront Test Distribution Parameters
+testdistroparams=$(echo "$cfdistroconfigtemplate" | jq \
+--arg callerreference "test-$bucketname-distro"
+--arg originid "$bucketname-${initial_version//./-}" \
+--arg bucketaddress "$bucketaddress" \
+--arg comment "$cftest" \
+--arg OAI "origin-access-identity/cloudfront/$OAI" \
+--arg realeasefolder "/$initial_version" \
+--arg loggingfolder "/website-logs/test" \
+'.CallerReference = $callerreference |
+.Origins.Items[].Id = $originid | 
+.Origins.Items[].DomainName = $bucketaddress | 
+.Origins.Items[].OriginPath = $realeasefolder | 
+.Origins.Items[].S3OriginConfig.OriginAccessIdentity = $OAI | 
+.DefaultCacheBehavior.TargetOriginId =$originid |
+.Comment = $comment |
+.Logging.Bucket = $bucketaddress | 
+.Logging.Prefix = $loggingfolder')
+report "testdistroparams=$testdistroparams"
 
-# Create Cloudfront Blue Distribution
+# Create Test CloudFront Distribution
+runcommandescaped "`aws cloudfront create-distribution --distribution-config "$testdistroparams"`"
+
+# Create Cloudfront Blue Distribution Parameters
+bluedistroparams=$(echo "$cfdistroconfigtemplate" | jq \
+--arg callerreference "blue-$bucketname-distro" \
+--arg originid "$bucketname-${initial_version//./-}" \
+--arg bucketaddress "$bucketaddress" \
+--arg comment "$cfblue" \
+--arg OAI "origin-access-identity/cloudfront/$OAI" \
+--arg realeasefolder "/$initial_version" \
+--arg loggingfolder "/website-logs/blue" \
+'.CallerReference = $callerreference |
+.Origins.Items[].Id = $originid |
+.Origins.Items[].DomainName = $bucketaddress | 
+.Origins.Items[].OriginPath = $realeasefolder | 
+.Origins.Items[].S3OriginConfig.OriginAccessIdentity = $OAI | 
+.DefaultCacheBehavior.TargetOriginId =$originid |
+.Comment = $comment |
+.Logging.Bucket = $bucketaddress | 
+.Logging.Prefix = $loggingfolder')
+report "bluedistroparams=$bluedistroparams"
+
+# Create Blue CloudFront Distribution
+runcommandescaped "`aws cloudfront create-distribution --distribution-config "$bluedistroparams"`"
+
+
+# Create Cloudfront Green Distribution Parameters
+greendistroparams=$(echo "$cfdistroconfigtemplate" | jq \
+--arg callerreference "green-$bucketname-distro" \
+--arg originid "$bucketname-${initial_version//./-}" \
+--arg bucketaddress "$bucketaddress" \
+--arg comment "$cfgreen" \
+--arg OAI "origin-access-identity/cloudfront/$OAI" \
+--arg realeasefolder "/$initial_version" \
+--arg loggingfolder "/website-logs/green" \
+'.CallerReference = $callerreference |
+.Origins.Items[].Id = $originid |
+.Origins.Items[].DomainName = $bucketaddress | 
+.Origins.Items[].OriginPath = $realeasefolder | 
+.Origins.Items[].S3OriginConfig.OriginAccessIdentity = $OAI | 
+.DefaultCacheBehavior.TargetOriginId =$originid |
+.Comment = $comment |
+.Logging.Bucket = $bucketaddress | 
+.Logging.Prefix = $loggingfolder')
+report "greendistroparams=$bluedistroparams"
+
+# Create Green CloudFront Distribution
+runcommandescaped "`aws cloudfront create-distribution --distribution-config "$greendistroparams"`"
 
 
 
-origin="$bucketname.s3.amazonaws.com/"
 runcommand="aws cloudfront create-distribution --origin-domain-name $origin"
 
 # OriginPath=/$appname/$initial_version
 # Create Cloudfront Green Distribution
-# Create Cloudfront Test Distribution
+
 
 #Create Lambda Function to update cloudfront distributions
